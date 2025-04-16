@@ -1,3 +1,35 @@
+export enum DataType {
+  INT16 = 'int16',
+  UINT16 = 'uint16',
+  INT32 = 'int32',
+  UINT32 = 'uint32',
+  FLOAT32 = 'float32',
+  BOOLEAN = 'boolean',
+  STRING = 'string',
+}
+
+export enum RegisterType {
+  HOLDING = 'holding',
+  INPUT = 'input',
+  COIL = 'coil',
+  DISCRETE_INPUT = 'discrete_input',
+}
+
+export interface Register {
+  id: string; // Unique identifier for React key prop and updates
+  address: number;
+  label: string;
+  description?: string;
+  dataType: DataType;
+  registerType: RegisterType;
+  unit?: string;
+  writable?: boolean;
+  scaleFactor?: number;
+  offset?: number;
+}
+
+// Type for defining register templates before an ID is assigned
+export type RegisterTemplate = Omit<Register, 'id'>;
 
 export interface ConnectionStatusOptions {
   host: string;

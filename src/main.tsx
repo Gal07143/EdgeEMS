@@ -1,21 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Toaster } from 'sonner';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { DeviceProvider } from './contexts/DeviceContext';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AppProviders } from './providers/AppProviders';
 import './index.css';
-
-// Create a query client for React Query
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 60 * 1000,
-      retry: 1
-    }
-  }
-});
 
 // Get the root element
 const rootElement = document.getElementById('root');
@@ -30,16 +20,16 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <DeviceProvider>
+      <BrowserRouter>
+        <AppProviders>
           <App />
-          <Toaster 
-            position="top-right"
-            closeButton
-            richColors
-          />
-        </DeviceProvider>
-      </QueryClientProvider>
+        </AppProviders>
+      </BrowserRouter>
     </ErrorBoundary>
+    <Toaster 
+      position="top-right"
+      closeButton
+      richColors
+    />
   </React.StrictMode>,
 );

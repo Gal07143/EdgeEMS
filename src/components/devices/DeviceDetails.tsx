@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,8 +9,9 @@ import { AlertTriangle, Activity, Battery, Download, TrendingUp, TrendingDown } 
 import { format } from 'date-fns';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Device, TelemetryData } from '@/types/device';
-import { MLService, MLServiceConfig } from '@/types/mlService';
+import { MLService, MLServiceConfig } from '@/services/mlService';
 import { ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, Area, Line } from 'recharts';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface DeviceDetailsProps {
   deviceId: string;
@@ -47,92 +47,140 @@ const sampleDevice: Device = {
   protocol: 'MQTT'
 };
 
+// Define Prediction and Anomaly types for clarity
+interface PredictionPoint {
+  timestamp: string | Date;
+  prediction: number;
+}
+
+interface AnomalyPoint extends TelemetryData {
+  anomalyScore: number;
+  confidence: number;
+}
+
 const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
   const [device, setDevice] = useState<Device | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryData[]>([]);
-  const [consumermlService, setConsumerMLService] = useState<MLService | null>(null);
-  const [generationmlService, setGenerationMLService] = useState<MLService | null>(null);
-  const [predictions, setPredictions] = useState<any[]>([]);
-  const [anomalies, setAnomalies] = useState<any[]>([]);
+  const [mlService, setMlService] = useState<MLService | null>(null);
+  const [predictions, setPredictions] = useState<PredictionPoint[]>([]);
+  const [anomalies, setAnomalies] = useState<AnomalyPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlError, setMlError] = useState<string | null>(null);
 
-  // Configuration for the ML services
-  const consumerConfig: MLServiceConfig = {
-    modelPath: '/models/consumer-prediction',
-    inputShape: [24, 5],
-    outputShape: [24, 1],
-    featureNames: ['time', 'temperature', 'humidity', 'occupancy', 'day_of_week'],
-    modelType: 'timeseries' // Changed from 'consumption' to a valid model type
-  };
-
-  const generationConfig: MLServiceConfig = {
-    modelPath: '/models/generation-prediction',
-    inputShape: [24, 7],
-    outputShape: [24, 1],
-    featureNames: ['time', 'solar_irradiance', 'temperature', 'cloud_cover', 'panel_efficiency', 'panel_age', 'day_of_year'],
-    modelType: 'regression'
+  // Config (assuming one service handles both for now, might need splitting)
+  const mlConfig: MLServiceConfig = {
+    modelPath: `/models/${deviceId}-model`, // Example path
+    inputShape: [24, 1], // Example shape (adjust based on actual model)
+    outputShape: [1, 1], // Example shape
+    featureNames: ['value'], // Example features
+    modelType: 'onnx' // Example type
   };
 
   // Fetch device data
   useEffect(() => {
+    setLoading(true);
     // Mock API call
     setTimeout(() => {
       setDevice(sampleDevice);
-      setTelemetry(sampleTelemetryData);
+      setTelemetry(sampleTelemetryData); // Use sample data for now
       setLoading(false);
     }, 500);
   }, [deviceId]);
 
-  // Initialize ML services
+  // Initialize ML service
   useEffect(() => {
+    let service: MLService | null = null;
     const initML = async () => {
       try {
-        const consumerService = new MLService(consumerConfig);
-        await consumerService.initialize();
-        setConsumerMLService(consumerService);
-
-        const generationService = new MLService(generationConfig);
-        await generationService.initialize();
-        setGenerationMLService(generationService);
-
-        // Generate sample predictions and anomalies
-        if (telemetry.length > 0) {
-          // Mock the anomaly detection and predictions
-          const mockAnomalies = telemetry.map(item => ({
-            ...item,
-            isAnomaly: Math.random() > 0.8,
-            anomalyScore: Math.random()
-          })).filter(item => item.isAnomaly);
-          
-          setAnomalies(mockAnomalies);
-          
-          const mockPredictions = telemetry.map(item => ({
-            timestamp: item.timestamp,
-            prediction: item.value * (1 + (Math.random() * 0.4 - 0.2))  // Vary by ±20%
-          }));
-          
-          setPredictions(mockPredictions);
-        }
+        console.log("Initializing ML Service for", deviceId);
+        service = new MLService(mlConfig);
+        await service.initialize();
+        setMlService(service);
+        console.log("ML Service Initialized");
       } catch (error) {
-        console.error('Error initializing ML services:', error);
+        console.error('Error initializing ML service:', error);
+        setMlError(error instanceof Error ? error.message : 'Failed to initialize ML service');
+        setMlService(null); // Ensure service is null on error
       }
     };
 
-    if (telemetry.length > 0 && !consumermlService) {
-      initML();
-    }
+    initML();
 
     // Cleanup function
     return () => {
-      // Mock cleanup
-      console.log('Cleaning up ML services');
+      service?.dispose();
+      console.log('Cleaning up ML service for', deviceId);
     };
-  }, [telemetry]);
+  }, [deviceId]); // Re-init if deviceId changes
+
+  // Run predictions and anomaly detection when service and data are ready
+  useEffect(() => {
+    if (mlService && telemetry.length > 0) {
+      const runMLTasks = async () => {
+        setMlLoading(true);
+        setMlError(null);
+        try {
+          // --- Predictions --- 
+          // Create future timestamps (e.g., next 6 hours)
+          const lastTimestamp = new Date(telemetry[telemetry.length - 1].timestamp);
+          const futureTimestamps = Array.from({ length: 6 }, (_, i) => 
+            new Date(lastTimestamp.getTime() + (i + 1) * 60 * 60 * 1000).toISOString()
+          );
+          
+          // Prepare input data (e.g., last 24h values)
+          const predictionInput = telemetry.slice(-24).map(t => t.value); // Adjust as needed
+          const predictedValues = await mlService.predictBehavior(predictionInput, futureTimestamps.length);
+          
+          const newPredictions: PredictionPoint[] = futureTimestamps.map((ts, i) => ({
+            timestamp: ts,
+            prediction: predictedValues[i] ?? 0 // Use predicted value or default
+          }));
+          setPredictions(newPredictions);
+          console.log("Predictions generated:", newPredictions);
+
+          // --- Anomaly Detection --- 
+          // Run detection on recent telemetry
+          const anomalyInput = telemetry.slice(-10); // Example: check last 10 points
+          const detectedAnomalies: AnomalyPoint[] = [];
+          for (const point of anomalyInput) {
+              // Ideally, batch this if service supports it
+              const result = await mlService.detectAnomalies([point.value]); // Pass relevant features
+              if (result.anomalyScore > 0.7) { // Example threshold
+                 detectedAnomalies.push({
+                    ...point,
+                    anomalyScore: result.anomalyScore,
+                    confidence: result.confidence
+                 });
+              }
+          }
+          setAnomalies(detectedAnomalies);
+          console.log("Anomalies detected:", detectedAnomalies);
+
+        } catch (error) {
+          console.error('Error running ML tasks:', error);
+          setMlError(error instanceof Error ? error.message : 'Failed to run ML tasks');
+          setPredictions([]);
+          setAnomalies([]);
+        } finally {
+          setMlLoading(false);
+        }
+      };
+      runMLTasks();
+    }
+  }, [mlService, telemetry]); // Rerun if service or telemetry changes
 
   if (loading || !device) {
-    return <div>Loading device details...</div>;
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    ); // Show skeleton loaders
   }
 
+  // --- Render Logic --- 
   return (
     <div className="space-y-6">
       <ErrorBoundary>
@@ -236,6 +284,8 @@ const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
             <Card>
               <CardHeader>
                 <CardTitle>Energy Forecast</CardTitle>
+                {mlLoading && <p className="text-sm text-muted-foreground">Generating forecast...</p>}
+                {mlError && <p className="text-sm text-red-500">Error: {mlError}</p>}
               </CardHeader>
               <CardContent>
                 {predictions.length > 0 ? (
@@ -246,38 +296,21 @@ const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis 
                             dataKey="timestamp" 
-                            tickFormatter={(value) => {
-                              const date = new Date(value);
-                              return format(date, 'HH:mm');
-                            }}
+                            tickFormatter={(value) => format(new Date(value), 'HH:mm')}
                           />
-                          <YAxis />
+                          <YAxis label={{ value: 'Predicted kW', angle: -90, position: 'insideLeft' }} />
                           <Tooltip 
-                            labelFormatter={(value) => {
-                              const date = new Date(value);
-                              return format(date, 'PPpp');
-                            }}
+                             labelFormatter={(value) => format(new Date(value), 'PPpp')}
+                             formatter={(value: number) => [`${value.toFixed(1)} kW`, 'Prediction']}
                           />
-                          <Line type="monotone" dataKey="prediction" stroke="#8884d8" activeDot={{ r: 8 }} />
+                          <Line type="monotone" dataKey="prediction" name="Forecast" stroke="#8884d8" strokeWidth={2} dot={false} activeDot={{ r: 6 }} />
                         </LineChart>
                       </ResponsiveContainer>
-                    </div>
-                    
-                    <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-md mt-4">
-                      <div className="flex justify-between items-center mb-2">
-                        <p className="font-medium">Expected Energy Pattern</p>
-                        <Badge variant="secondary">AI Generated</Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-300">
-                        Based on historical data and current conditions, we predict that energy consumption will
-                        peak at {format(new Date(), 'HH:mm')} with an estimated value of 
-                        {Math.max(...predictions.map(p => p.prediction)).toFixed(1)} kW.
-                      </p>
                     </div>
                   </>
                 ) : (
                   <div className="flex items-center justify-center h-40">
-                    <p>No prediction data available</p>
+                    <p className="text-muted-foreground">{mlLoading ? 'Loading predictions...' : 'No prediction data available'}</p>
                   </div>
                 )}
               </CardContent>
@@ -288,25 +321,27 @@ const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
             <Card>
               <CardHeader>
                 <CardTitle>Detected Anomalies</CardTitle>
+                {mlLoading && <p className="text-sm text-muted-foreground">Checking for anomalies...</p>}
+                {mlError && <p className="text-sm text-red-500">Error: {mlError}</p>}
               </CardHeader>
               <CardContent>
                 {anomalies.length > 0 ? (
                   <div className="space-y-4">
-                    {anomalies.map((anomaly, index) => (
-                      <div key={index} className="bg-red-50 dark:bg-red-900/20 p-4 rounded-md border-l-4 border-red-500">
+                    {anomalies.map((anomaly) => (
+                      <div key={anomaly.id} className="bg-red-50 dark:bg-red-900/20 p-4 rounded-md border-l-4 border-red-500">
                         <div className="flex items-start">
-                          <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 mr-2" />
-                          <div>
-                            <h4 className="font-medium">Anomaly Detected</h4>
+                          <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
+                          <div className="flex-grow">
+                            <div className="flex justify-between items-center">
+                               <h4 className="font-medium">Anomaly Detected</h4>
+                               <span className="text-xs text-muted-foreground">{format(new Date(anomaly.timestamp), 'PPpp')}</span>
+                            </div>
                             <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                              Unusual value of {anomaly.value} {anomaly.unit} detected at {
-                                format(new Date(anomaly.timestamp), 'PPpp')
-                              }
+                              Unusual value of <span className="font-semibold">{anomaly.value} {anomaly.unit}</span> detected for {anomaly.measurement}.
                             </p>
-                            <div className="mt-2">
-                              <p className="text-xs text-gray-500">
-                                Confidence: {(anomaly.anomalyScore * 100).toFixed(0)}%
-                              </p>
+                            <div className="mt-2 flex space-x-4 text-xs text-gray-500">
+                               <span>Confidence: <Badge variant="destructive">{(anomaly.confidence * 100).toFixed(0)}%</Badge></span>
+                               <span>Score: <Badge variant="secondary">{anomaly.anomalyScore.toFixed(2)}</Badge></span>
                             </div>
                           </div>
                         </div>
@@ -314,16 +349,8 @@ const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
                     ))}
                   </div>
                 ) : (
-                  <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-md border-l-4 border-green-500">
-                    <div className="flex items-center">
-                      <Activity className="h-5 w-5 text-green-500 mr-2" />
-                      <div>
-                        <h4 className="font-medium">No Anomalies Detected</h4>
-                        <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                          Device is operating within expected parameters
-                        </p>
-                      </div>
-                    </div>
+                  <div className="flex items-center justify-center h-40">
+                     <p className="text-muted-foreground">{mlLoading ? 'Checking for anomalies...' : 'No anomalies detected in recent data.'}</p>
                   </div>
                 )}
               </CardContent>
@@ -405,4 +432,5 @@ const DeviceDetails: React.FC<DeviceDetailsProps> = ({ deviceId }) => {
   );
 };
 
-export default DeviceDetails;
+// Keep only named export
+export { DeviceDetails };

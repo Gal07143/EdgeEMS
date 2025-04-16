@@ -1,8 +1,6 @@
-
 import React, { ReactNode } from 'react';
-import { ThemeProvider } from '@/components/theme-provider';
+import { ThemeProvider } from '@/components/theme/theme-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
 import { EnergyFlowProvider } from '@/components/dashboard/energy-flow/EnergyFlowContext';
 import { DeviceProvider } from '@/contexts/DeviceContext';
 import MicrogridProvider from '@/components/microgrid/MicrogridProvider';
@@ -24,19 +22,17 @@ export interface AppProvidersProps {
 
 export const AppProviders: React.FC<AppProvidersProps> = ({ children }) => {
   return (
-    <BrowserRouter>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider defaultTheme="system" storageKey="theme-preference">
-          <DeviceProvider>
-            <MicrogridProvider>
-              <EnergyFlowProvider>
-                {children}
-              </EnergyFlowProvider>
-            </MicrogridProvider>
-          </DeviceProvider>
-        </ThemeProvider>
-      </QueryClientProvider>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="system" storageKey="theme-preference">
+        <DeviceProvider>
+          <MicrogridProvider>
+            <EnergyFlowProvider>
+              {children}
+            </EnergyFlowProvider>
+          </MicrogridProvider>
+        </DeviceProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 };
 

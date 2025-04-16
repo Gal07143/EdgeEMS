@@ -1,4 +1,5 @@
-import React, { Fragment } from 'react';
+import * as React from 'react';
+import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
@@ -6,7 +7,8 @@ import {
   Book, Bell, Database, FileText, Users, Globe, LineChart,
   Layers, Plug, Settings, ChevronRight, ChevronDown, Home,
   LayoutDashboard, Clock, Leaf, DollarSign, Cpu, Binary, Grid,
-  Workflow, Building2, PieChart, Terminal, BarChartHorizontal
+  Workflow, Building2, PieChart, Terminal, BarChartHorizontal,
+  BatteryCharging
 } from 'lucide-react';
 
 interface SidebarNavProps {
@@ -36,7 +38,7 @@ interface SidebarSection {
   }[];
 }
 
-const SidebarItem = ({ 
+const SidebarItem: React.FC<SidebarItemProps> = ({ 
   icon, 
   label, 
   href, 
@@ -45,7 +47,7 @@ const SidebarItem = ({
   hasChildren, 
   isOpen,
   onClick 
-}: SidebarItemProps) => {
+}) => {
   return (
     <Link
       to={href}
@@ -77,26 +79,36 @@ const SidebarItem = ({
 
 const SidebarNav: React.FC<SidebarNavProps> = ({ isCollapsed, onToggle }) => {
   const location = useLocation();
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    equipment: true,
-    energy: true,
-    meters: false,
-    spaces: false,
-    monitoring: false,
-    fdd: false,
-    knowledge: false,
-    data: false,
-    reporting: false,
-    users: false,
-    visualization: false,
-    planning: false,
-    integration: false
+  
+  // Use item labels (lowercased, hyphenated) as keys for consistency
+  const [openSections, setOpenSections] = React.useState<Record<string, boolean>>({
+    'dashboard': true, // Assuming dashboard is always 'open' or non-collapsible
+    'devices': true, // Add devices section, default open
+    'equipment': true,
+    'energy-management': true,
+    'meter-management': false,
+    'space-management': false,
+    'environmental': false,
+    'fault-detection': false,
+    'knowledge-base': false,
+    'alerts': false, // Assuming alerts doesn't have children, key might not be needed
+    'data-processing': false,
+    'reports': false,
+    'users': false,
+    'languages': false, // Assuming languages doesn't have children
+    'visualizations': false,
+    'planning': false,
+    'integrations': false,
+    // Add keys for any other parent items if needed
   });
 
-  const toggleSection = (section: string) => {
+  const getItemKey = (label: string) => label.toLowerCase().replace(/\s+/g, '-');
+
+  const toggleSection = (itemLabel: string) => {
+    const key = getItemKey(itemLabel);
     setOpenSections((prev) => ({
       ...prev,
-      [section]: !prev[section]
+      [key]: !prev[key]
     }));
   };
 
@@ -109,6 +121,27 @@ const SidebarNav: React.FC<SidebarNavProps> = ({ isCollapsed, onToggle }) => {
           label: "Dashboard", 
           href: "/dashboard", 
           icon: <Home className="h-4 w-4" /> 
+        }
+      ]
+    },
+    {
+      title: "Devices",
+      icon: <Cpu className="h-4 w-4" />,
+      items: [
+        {
+          label: "All Devices",
+          href: "/devices",
+          icon: <Grid className="h-4 w-4" />
+        },
+        {
+          label: "EV Chargers",
+          href: "/devices/ev-chargers",
+          icon: <Plug className="h-4 w-4" />
+        },
+        {
+          label: "Battery Details",
+          href: "/devices/battery/example",
+          icon: <BatteryCharging className="h-4 w-4" />
         }
       ]
     },
@@ -333,53 +366,55 @@ const SidebarNav: React.FC<SidebarNavProps> = ({ isCollapsed, onToggle }) => {
       "flex flex-col gap-1 py-2 h-full overflow-y-auto scrollbar-thin",
       isCollapsed ? "w-14" : "w-64"
     )}>
-      {sections.map((section) => (
-        <div key={section.title} className="px-2">
-          {!isCollapsed && (
+      {sections.map((section, sectionIndex) => (
+        <Fragment key={`${section.title}-${sectionIndex}`}>
+          {!isCollapsed && section.title && (
             <h3 className="flex items-center gap-2 mb-1 px-2 text-xs font-medium text-muted-foreground">
               {section.icon}
               {section.title}
             </h3>
           )}
           <div className="space-y-1">
-            {section.items.map((item) => (
-              <Fragment key={item.href}>
-                <SidebarItem
-                  icon={item.icon}
-                  label={item.label}
-                  href={item.href}
-                  isActive={location.pathname === item.href || 
-                    location.pathname.startsWith(`${item.href}/`)}
-                  isCollapsed={isCollapsed}
-                  hasChildren={!!item.children && item.children.length > 0}
-                  isOpen={openSections[item.label.toLowerCase().replace(' ', '-')]}
-                  onClick={() => {
-                    if (item.children && item.children.length) {
-                      toggleSection(item.label.toLowerCase().replace(' ', '-'));
-                    }
-                  }}
-                />
-                {!isCollapsed && 
-                  item.children && 
-                  item.children.length > 0 && 
-                  openSections[item.label.toLowerCase().replace(' ', '-')] && (
-                  <div className="ml-4 mt-1 space-y-1 border-l pl-2 border-border/30">
-                    {item.children.map((child) => (
-                      <SidebarItem
-                        key={child.href}
-                        icon={child.icon}
-                        label={child.label}
-                        href={child.href}
-                        isActive={location.pathname === child.href}
-                        isCollapsed={false}
-                      />
-                    ))}
-                  </div>
-                )}
-              </Fragment>
-            ))}
+            {section.items.map((item) => {
+              const itemKey = getItemKey(item.label);
+              const isActive = location.pathname.startsWith(item.href) && (item.href !== '/' || location.pathname === '/');
+              const isOpen = !!openSections[itemKey];
+              const hasChildren = !!item.children && item.children.length > 0;
+
+              return (
+                <Fragment key={item.href}>
+                  <SidebarItem
+                    icon={item.icon}
+                    label={item.label}
+                    href={item.href}
+                    isActive={isActive && !hasChildren}
+                    isCollapsed={isCollapsed}
+                    hasChildren={hasChildren}
+                    isOpen={isOpen}
+                    onClick={hasChildren ? () => toggleSection(item.label) : undefined}
+                  />
+                  {!isCollapsed && hasChildren && isOpen && (
+                    <div className="ml-4 mt-1 space-y-1 border-l pl-2 border-border/30">
+                      {item.children?.map((child) => {
+                        const isChildActive = location.pathname === child.href;
+                        return (
+                          <SidebarItem
+                            key={child.href}
+                            icon={child.icon}
+                            label={child.label}
+                            href={child.href}
+                            isActive={isChildActive}
+                            isCollapsed={false}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
           </div>
-        </div>
+        </Fragment>
       ))}
     </div>
   );

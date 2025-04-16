@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -22,7 +21,7 @@ interface Meter {
   type: string;
   lastReading: number;
   unit: string;
-  status: 'online' | 'offline' | 'warning';
+  status: 'online' | 'offline' | 'warning' | 'error';
   lastUpdate: string;
 }
 
@@ -64,9 +63,8 @@ const meterData: Meter[] = [
     type: 'Gas',
     lastReading: 4582.3,
     unit: 'm³',
-    status: 'warning',
-    status: 'warning',
-    lastUpdate: '15 min ago'
+    status: 'error',
+    lastUpdate: '2024-07-25 08:00 AM'
   },
   { 
     id: 'm5',

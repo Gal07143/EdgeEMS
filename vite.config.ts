@@ -1,8 +1,6 @@
-
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }: { mode: string }) => ({
@@ -19,7 +17,6 @@ export default defineConfig(({ mode }: { mode: string }) => ({
       // For React-SWC, don't use fastRefresh property
       // It's internally managed by the plugin
     }),
-    (mode === 'development' || mode === 'preview') && componentTagger(),
   ].filter(Boolean),
   resolve: {
     alias: {

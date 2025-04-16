@@ -1,6 +1,6 @@
-
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useMemo } from 'react';
 import { useDevices } from '@/hooks/useDevices';
+import { EnergyDevice } from '@/types/energy';
 import { toast } from 'sonner';
 
 /**
@@ -54,12 +54,7 @@ const defaultContext: MicrogridContextType = {
   getDeviceMetrics: () => ({ count: 0, totalPower: 0, averageEfficiency: 0 }),
 };
 
-const MicrogridContext = createContext<MicrogridContextType>(defaultContext);
-
-/**
- * Hook to access microgrid context
- */
-export const useMicrogrid = () => useContext(MicrogridContext);
+export const MicrogridContext = createContext<MicrogridContextType>(defaultContext);
 
 interface MicrogridProviderProps {
   children: ReactNode;
@@ -85,88 +80,106 @@ const MicrogridProvider: React.FC<MicrogridProviderProps> = ({
   children,
   refreshInterval = 30000, // 30 seconds default
 }) => {
-  const { devices, deviceTelemetry = {} } = useDevices();
+  const { devices, deviceTelemetry } = useDevices();
   const [state, setState] = useState<MicrogridState>({
     ...defaultContext,
     isLoading: true,
   });
 
-  /**
-   * Get the latest telemetry data for a device
-   */
-  const getLatestTelemetry = useCallback((deviceId: string): TelemetryData | null => {
-    const telemetry = deviceTelemetry[deviceId];
-    if (telemetry && telemetry.length > 0) {
-      return telemetry[0];
+  // Memoize the telemetry map generation to avoid recalculating it on every render
+  // unless deviceTelemetry itself changes.
+  const latestTelemetryMap = useMemo(() => {
+    const map = new Map<string, TelemetryData>();
+    if (!Array.isArray(deviceTelemetry)) {
+      return map; // Return empty map if no telemetry
     }
-    return null;
-  }, [deviceTelemetry]);
 
-  /**
-   * Calculate metrics for a specific device type
-   */
-  const calculateDeviceMetrics = useCallback((type: DeviceType) => {
-    const typeDevices = (devices || []).filter(device => device.type === type && device.status === 'online');
-    const totalPower = typeDevices.reduce((sum, device) => {
-      const telemetry = getLatestTelemetry(device.id);
-      return sum + (telemetry?.data?.power || 0);
-    }, 0);
-    const averageEfficiency = typeDevices.length > 0 ? 
-      (typeDevices.reduce((sum, device) => {
-        const telemetry = getLatestTelemetry(device.id);
-        return sum + (telemetry?.data?.efficiency || 0);
-      }, 0) / typeDevices.length) : 0;
+    deviceTelemetry.forEach(telemetry => {
+      if (telemetry.device_id) {
+        const existing = map.get(telemetry.device_id);
+        const currentTimestamp = telemetry.timestamp ? new Date(telemetry.timestamp).getTime() : 0;
+        const existingTimestamp = existing?.timestamp ? new Date(existing.timestamp).getTime() : 0;
 
-    return {
-      count: typeDevices.length,
-      totalPower,
-      averageEfficiency,
-    };
-  }, [devices, getLatestTelemetry]);
+        // Store only the latest entry for each device_id
+        if (!existing || currentTimestamp > existingTimestamp) {
+          map.set(telemetry.device_id, telemetry);
+        }
+      }
+    });
+    return map;
+  }, [deviceTelemetry]); // Only depends on the telemetry data array
 
   /**
    * Calculate all microgrid metrics based on device data
    */
   const calculateMetrics = useCallback(async () => {
+    // Define helper function to get latest telemetry directly using the memoized map
+    const getLatestTelemetryForDevice = (deviceId: string): TelemetryData | undefined => {
+      return latestTelemetryMap.get(deviceId);
+    };
+
+    // Define helper function to calculate metrics for a specific device type
+    const calculateMetricsForType = (type: DeviceType): { count: number; totalPower: number; averageEfficiency: number } => {
+        const typeDevices = (devices || []).filter((device: EnergyDevice) => device.type === type && device.status === 'online');
+        let totalPower = 0;
+        let totalEfficiency = 0;
+
+        typeDevices.forEach((device: EnergyDevice) => {
+            const telemetry = getLatestTelemetryForDevice(device.id);
+            totalPower += telemetry?.data?.power || 0;
+            totalEfficiency += telemetry?.data?.efficiency || 0;
+        });
+
+        const averageEfficiency = typeDevices.length > 0 ? totalEfficiency / typeDevices.length : 0;
+
+        return {
+            count: typeDevices.length,
+            totalPower,
+            averageEfficiency,
+        };
+    };
+
+    // --- Main Calculation Logic ---
     try {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
 
-      const connectedDevices = (devices || []).filter(device => device.status === 'online');
-      const totalPower = connectedDevices.reduce((sum, device) => {
-        const telemetry = getLatestTelemetry(device.id);
-        return sum + (telemetry?.data?.power || 0);
-      }, 0);
+      const connectedDevices = (devices || []).filter((device: EnergyDevice) => device.status === 'online');
+      let totalPower = 0;
+      let totalEfficiencySum = 0;
 
-      const batteryMetrics = calculateDeviceMetrics('battery');
-      const solarMetrics = calculateDeviceMetrics('solar');
-      const windMetrics = calculateDeviceMetrics('wind');
-      const loadMetrics = calculateDeviceMetrics('load');
+      connectedDevices.forEach((device: EnergyDevice) => {
+        const telemetry = getLatestTelemetryForDevice(device.id);
+        totalPower += telemetry?.data?.power || 0;
+        totalEfficiencySum += telemetry?.data?.efficiency || 0;
+      });
 
-      const gridDevices = connectedDevices.filter(device => device.type === 'grid');
+      const batteryMetrics = calculateMetricsForType('battery');
+      const solarMetrics = calculateMetricsForType('solar');
+      const windMetrics = calculateMetricsForType('wind');
+      const loadMetrics = calculateMetricsForType('load');
+
+      const gridDevices = connectedDevices.filter((device: EnergyDevice) => device.type === 'grid');
       const gridStatus = gridDevices.length > 0
         ? gridDevices.some(device => {
-            const telemetry = getLatestTelemetry(device.id);
+            const telemetry = getLatestTelemetryForDevice(device.id);
             return telemetry?.data?.gridConnected;
           })
           ? 'connected'
           : 'disconnected'
         : 'unknown';
 
-      const efficiency = connectedDevices.length > 0 ? 
-        (connectedDevices.reduce((sum, device) => {
-          const telemetry = getLatestTelemetry(device.id);
-          return sum + (telemetry?.data?.efficiency || 0);
-        }, 0) / connectedDevices.length) : 0;
+      const overallEfficiency = connectedDevices.length > 0 ? 
+        (totalEfficiencySum / connectedDevices.length) : 0;
 
       setState({
         isConnected: connectedDevices.length > 0,
         totalPower,
-        batteryLevel: batteryMetrics.totalPower,
+        batteryLevel: batteryMetrics.totalPower, // Assuming battery power represents level for now
         gridStatus,
         solarPower: solarMetrics.totalPower,
         windPower: windMetrics.totalPower,
         loadPower: loadMetrics.totalPower,
-        efficiency,
+        efficiency: overallEfficiency,
         lastUpdated: new Date(),
         isLoading: false,
         error: null,
@@ -180,35 +193,68 @@ const MicrogridProvider: React.FC<MicrogridProviderProps> = ({
       }));
       toast.error(errorMessage);
     }
-  }, [devices, calculateDeviceMetrics, getLatestTelemetry]);
+    // Depend directly on the data, not intermediate functions
+  }, [devices, latestTelemetryMap]);
 
   /**
    * Get metrics for a specific device type
+   * This function now needs to replicate the logic or use the main state
+   * For simplicity, let's make it depend on the calculated state.
+   * Note: This means getDeviceMetrics will only be up-to-date after calculateMetrics runs.
    */
   const getDeviceMetrics = useCallback((type: DeviceType) => {
-    return calculateDeviceMetrics(type);
-  }, [calculateDeviceMetrics]);
+    // Re-calculate on demand or pull from state? Pulling from state is simpler here.
+    // We need to add these specific metrics to the state if we want to pull them directly.
+    // For now, let's return placeholders or recalculate (less efficient).
+    // Recalculating for simplicity, but ideally, memoize this if used frequently.
+     const typeDevices = (devices || []).filter((device: EnergyDevice) => device.type === type && device.status === 'online');
+     let totalPower = 0;
+     let totalEfficiency = 0;
+
+     typeDevices.forEach((device: EnergyDevice) => {
+         const telemetry = latestTelemetryMap.get(device.id);
+         totalPower += telemetry?.data?.power || 0;
+         totalEfficiency += telemetry?.data?.efficiency || 0;
+     });
+
+     const averageEfficiency = typeDevices.length > 0 ? totalEfficiency / typeDevices.length : 0;
+
+     return {
+         count: typeDevices.length,
+         totalPower,
+         averageEfficiency,
+     };
+
+  }, [devices, latestTelemetryMap]);
 
   // Initial metrics calculation
   useEffect(() => {
+    // console.log("Effect: Initial calculateMetrics");
     calculateMetrics();
-  }, [calculateMetrics]);
+    // Depend on the data used by calculateMetrics, not the function itself
+  }, [devices, latestTelemetryMap]);
 
   // Set up refresh interval
   useEffect(() => {
-    const interval = setInterval(calculateMetrics, refreshInterval);
-    return () => clearInterval(interval);
-  }, [calculateMetrics, refreshInterval]);
+    // console.log("Effect: Setting interval");
+    const interval = setInterval(() => {
+      // console.log("Interval: Firing calculateMetrics");
+      calculateMetrics();
+    }, refreshInterval);
+    return () => {
+      // console.log("Effect Cleanup: Clearing interval");
+      clearInterval(interval);
+    };
+    // Depend on the data used by calculateMetrics and the interval itself
+  }, [devices, latestTelemetryMap, refreshInterval]);
 
   return (
-    <MicrogridContext.Provider 
-      value={{
-        ...state,
-        refreshMetrics: calculateMetrics,
-        getDeviceMetrics,
-      }}
-    >
-      {children}
+    <MicrogridContext.Provider value={{
+      ...state,
+      refreshMetrics: calculateMetrics,
+      getDeviceMetrics,
+    }}>
+      {children} 
     </MicrogridContext.Provider>
   );
 };
